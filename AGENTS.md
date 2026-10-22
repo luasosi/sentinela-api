@@ -1,58 +1,54 @@
-# Repository Guidance
+<!-- bmad:context -->
+<!-- Verificado em 2026-10-21 contra 8aa617a. Gerenciado por bmad-project-context; edições dentro deste bloco são substituídas no refresh. Mantenha fora dos marcadores o que quiser preservar. -->
 
-## Overview
+## sentinela-api
 
-- The application is an ASP.NET Core 10 API implementing the RealWorld specification.
-- `src/Conduit` contains the web application and its feature-oriented vertical slices.
-- `tests/Conduit.IntegrationTests` contains xUnit integration tests using scoped SQLite contexts and HTTP tests using WebApplicationFactory. Focused authentication tests also use EF Core InMemory.
-- `build` contains the Bullseye build targets used by CI.
-- `realworld` is a vendored git submodule containing the upstream API specification tests. Do not edit it unless the task explicitly targets the submodule.
+API do Sentinela (plataforma de denúncias), fork do Conduit/RealWorld em ASP.NET Core 10 com vertical slices por feature (Mediator, FluentValidation, EF Core com SQLite e SQL Server). O contrato segue a spec RealWorld. O planejamento fica em `../plano/`, fora deste repositório (só existe no layout local).
 
-## Toolchain
+## Política
 
-- Use the .NET SDK version specified in `global.json` (`10.0.402`, with `latestFeature` roll-forward) and target `net10.0`.
-- Package versions are managed centrally in `Directory.Packages.props`.
-- Restore packages with lock files enabled. Restore updates to `packages.lock.json` files should be included when dependencies change.
-- The build enforces locked restore. CI passes `--check-format` to the build runner to check formatting without rewriting files.
-- Nullable reference types, recommended analyzers, code-style checks, and warnings-as-errors are enabled in `Directory.Build.props`.
-- CSharpier `1.3.0` is the repository formatter. The repository uses four-space indentation, file-scoped namespaces, `var`, explicit accessibility modifiers, and sorted `System` usings.
+- Nunca commite direto em `master`; crie uma branch por etapa de estudo (ex.: `etapa-1/laboratorio`) e abra PR para `master`.
+- Mensagens de commit em Conventional Commits, em português (`feat: ...`, `fix: ...`, `test: ...`, `chore: ...`).
+- Nunca altere migrations existentes em `src/Conduit/Infrastructure/Migrations/`; crie uma nova.
+- Não mexa na autenticação (JWT e hashing de senha, em `src/Conduit/Infrastructure/Security/`) sem pedido explícito.
+- Não edite o submódulo `realworld/` (spec upstream vendorizada), a menos que a tarefa seja explicitamente sobre ele.
+- Não commite saída de build, bancos SQLite locais, `.jwt-signing-key` nem outros segredos.
 
-## Validation
+## Onde ficam as coisas
 
-Run the standard validation target after code changes:
+- App: `src/Conduit/`; cada feature em `Features/<Feature>/`, com command/query, validator, handler e modelos juntos.
+- Testes: `tests/Conduit.IntegrationTests/` em xUnit — slices com SQLite em memória (`SliceFixture`), HTTP com `WebApplicationFactory` (`ApiFactory`); testes focados de autenticação usam EF Core InMemory.
+- Alvos de build Bullseye usados pelo CI: `build/Program.cs`.
+- Mudando o modelo compartilhado? Leia `docs/database-migrations.md` antes, inclusive para baseline de bancos existentes.
 
-```sh
-dotnet run --project build/build.csproj -- test
-```
+## Rodar e verificar
 
-The target formats the repository, builds the solution in Release mode, and runs all test projects. To format without building, run:
+- SDK do `global.json` (`10.0.402`, roll-forward `latestFeature`), target `net10.0`.
+- Depois de mudar código: `dotnet run --project build/build.csproj -- test` — formata com CSharpier (reescreve arquivos), compila em Release e roda todos os projetos de teste. Só formatar: `-- format`. Pipeline completo do CI, com publish: sem argumentos.
+- O CI roda `dotnet restore Conduit.slnx --locked-mode` e o build com `--check-format`, que falha em arquivo não formatado em vez de reescrevê-lo.
+- Subir localmente no Windows: `.\subir-api.ps1` (sem `make`) — gera/reaproveita `.jwt-signing-key`, usa `conduit-local.db` e serve em `http://localhost:5050` (API em `/api`, Swagger em `/swagger`). Em macOS/Linux: `make run-local`.
+- Suítes da spec RealWorld (Hurl/Bruno) exigem `make`, bash e `git submodule update --init realworld`; no Windows sem `make`, deixe-as para o workflow "RealWorld API Tests" do CI.
 
-```sh
-dotnet run --project build/build.csproj -- format
-```
+## Convenções que diferem do padrão
 
-The CI-equivalent build, test, and publish pipeline is:
+- Versões de pacote só em `Directory.Packages.props`; nunca `Version=` no `PackageReference`.
+- Ao mudar dependências, rode `dotnet restore Conduit.slnx` e commite os `packages.lock.json` atualizados; o build usa restore travado.
+- Trate todo warning como erro: `Directory.Build.props` liga nullable, analyzers recomendados, code style no build e warnings-as-errors.
+- Use file-scoped namespaces e `using System` ordenados primeiro; o build não verifica isso.
+- Controllers finos; passe o `CancellationToken` da requisição até handlers e chamadas ao banco.
+- Valide requests com FluentValidation, preservando o formato de resposta de erro existente.
+- Persistência só via EF Core com `ConduitContext`; não introduza outra abstração de persistência sem requisito concreto.
+- Ao mudar o modelo, gere migrations para `SqliteConduitContext` e `SqlServerConduitContext` e converta o namespace gerado para file-scoped antes de compilar.
+- Mudança de comportamento exige teste de integração novo ou atualizado, principalmente no contrato da API RealWorld.
 
-```sh
-dotnet run --project build/build.csproj
-```
+## Armadilhas conhecidas
 
-Run the application locally with `make run-local`. The API is available at `http://localhost:5050`, and Swagger is available at `/swagger`.
+- No Windows PowerShell 5.1, `[Security.Cryptography.RandomNumberGenerator]::GetBytes(32)` não existe; use `[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buffer)`.
 
-The optional RealWorld API suites require the `realworld` submodule plus Hurl or Bun/Bruno:
+<!-- /bmad:context -->
 
-```sh
-make submodule
-make test-hurl-with-managed-server
-make test-bruno-with-managed-server
-```
+## Especificação
 
-## Development Practices
-
-- Keep commands, queries, validators, handlers, and related models together under the relevant feature folder.
-- Keep controllers thin and pass the request cancellation token through to handlers and database operations.
-- Use FluentValidation for request validation and preserve the existing error response behavior.
-- Use EF Core through `ConduitContext`; do not introduce a second persistence abstraction without a concrete requirement.
-- SQLite and SQL Server have separate derived context types and migration snapshots. Add migrations for both providers when changing the shared model. See `docs/database-migrations.md` for existing-database baselining.
-- Add or update integration tests for behavior changes, especially changes to the RealWorld API contract.
-- Do not commit generated build output, local SQLite databases, secrets, or changes inside the `realworld` submodule unless required.
+- Os ADRs só deste repositório ficam em `docs/adr/` (índice em `docs/adr/README.md`; leia o índice e abra o ADR só quando a tarefa tocar a regra dele). Os ADRs que valem para API e front (corporativos) ficam no repositório `sentinela-workspace`: `../docs/adr/` quando ele está ao lado, ou https://github.com/luasosi/sentinela-workspace/blob/master/docs/adr/README.md fora do workspace. Lá fica o próximo número livre; um ADR novo só deste repositório usa esse número.
+- Épicos, PRDs e histórias ficam fora deste repositório, em `../docs/` (repositório `sentinela-workspace`). Cada área fica em `../docs/features/<area>/`, com `epico.md` (negócio) e `arquitetura.md` (técnico comum). Cada feature tem `F0N-nome/prd.md` (negócio), `F0N-nome/tech-spec.md` (requisitos com `arquivo:linha`, contrato, erros HTTP e camadas impactadas) e as histórias em `00-qa/` a `05-front/`. O padrão completo está na seção "Padrão de documentação" de `../AGENTS.md`. Exemplo: `../docs/features/artigos/`.
+- Mudança de regra de negócio exige atualizar `../docs/` no mesmo dia.
